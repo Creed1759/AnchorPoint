@@ -4,6 +4,8 @@
 use crate::rate_limit::{ActionType, RateLimiter, RateLimitError};
 use soroban_sdk::{Env, Address};
 
+/// Admin module wrapper.
+/// Contains the sensitive protocol operations that require rate limiting.
 pub struct Admin;
 
 impl Admin {
