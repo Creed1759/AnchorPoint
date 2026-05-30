@@ -2,6 +2,7 @@ import { Horizon } from '@stellar/stellar-sdk';
 import { stellarService } from './stellar.service';
 import { metricsService } from './metrics.service';
 import { redis } from '../lib/redis';
+import { smtpService } from '../lib/smtp.service';
 import logger from '../utils/logger';
 import promClient, { Gauge } from 'prom-client';
 
@@ -302,20 +303,25 @@ export class HotWalletMonitorService {
   }
 
   private async sendEmailAlert(recipients: string, alert: AlertPayload): Promise<void> {
-    // This project has no email transport wired up yet.
-    // Log the intent so an operator / future SMTP integration can act on it.
-    logger.warn('[HotWalletMonitor] Email alert (no transport configured — log only)', {
-      recipients,
-      alert,
+    const text = [
+      'Hot Wallet Low Balance Alert',
+      `Wallet: ${alert.walletLabel}`,
+      `Asset: ${alert.assetCode}`,
+      `Current Balance: ${alert.currentBalance}`,
+      `Threshold: ${alert.thresholdAmount}`,
+      `Public Key: ${alert.publicKey}`,
+      `Detected At: ${alert.checkedAt}`,
+    ].join('\n');
+
+    const sent = await smtpService.sendMail({
+      to: recipients.split(',').map((recipient) => recipient.trim()).filter(Boolean),
+      subject: `[AnchorPoint] Low Balance: ${alert.walletLabel}`,
+      text,
     });
 
-    // TODO: wire up nodemailer / SendGrid / SES here when an SMTP service is added.
-    // Example:
-    //   await mailer.sendMail({
-    //     to: recipients,
-    //     subject: `[AnchorPoint] Low Balance: ${alert.walletLabel}`,
-    //     text: formatEmailBody(alert),
-    //   });
+    if (sent) {
+      logger.info('[HotWalletMonitor] Email alert sent', { wallet: alert.walletLabel, recipients });
+    }
   }
 
   private async sendCustomWebhook(url: string, alert: AlertPayload): Promise<void> {

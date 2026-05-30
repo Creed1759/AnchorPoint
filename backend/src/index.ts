@@ -27,11 +27,11 @@ import { errorHandler } from './api/middleware/error.middleware';
 import { metricsMiddleware, connectionTracker } from './api/middleware/metrics.middleware';
 import { publicLimiter } from './api/middleware/rate-limit.middleware';
 import { notificationService } from './services/notification.service';
-import { ConsoleEmailProvider, ConsoleSmsProvider, ConsolePushProvider } from './lib/notifications/providers';
+import { createEmailProvider, ConsoleSmsProvider, ConsolePushProvider } from './lib/notifications/providers';
 import { NotificationType } from '@prisma/client';
 
 // Initialize Notification Engine
-notificationService.registerProvider(NotificationType.EMAIL, new ConsoleEmailProvider());
+notificationService.registerProvider(NotificationType.EMAIL, createEmailProvider());
 notificationService.registerProvider(NotificationType.SMS, new ConsoleSmsProvider());
 notificationService.registerProvider(NotificationType.PUSH, new ConsolePushProvider());
 

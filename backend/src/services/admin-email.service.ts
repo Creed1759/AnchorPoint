@@ -1,7 +1,5 @@
-import nodemailer from 'nodemailer';
-
 import { config } from '../config/env';
-import logger from '../utils/logger';
+import { smtpService } from '../lib/smtp.service';
 
 export interface PasswordResetEmailInput {
   to: string;
@@ -17,30 +15,7 @@ export class SmtpAdminEmailService implements AdminEmailService {
   async sendPasswordResetEmail(input: PasswordResetEmailInput): Promise<void> {
     const resetUrl = `${config.ADMIN_PASSWORD_RESET_URL_BASE}?token=${encodeURIComponent(input.token)}`;
 
-    if (!config.SMTP_HOST || !config.SMTP_PORT || !config.SMTP_FROM) {
-      logger.info('SMTP not configured; password reset email logged for development', {
-        to: input.to,
-        resetUrl,
-        expiresAt: input.expiresAt.toISOString(),
-      });
-      return;
-    }
-
-    const transporter = nodemailer.createTransport({
-      host: config.SMTP_HOST,
-      port: config.SMTP_PORT,
-      secure: config.SMTP_PORT === 465,
-      auth:
-        config.SMTP_USER && config.SMTP_PASS
-          ? {
-              user: config.SMTP_USER,
-              pass: config.SMTP_PASS,
-            }
-          : undefined,
-    });
-
-    await transporter.sendMail({
-      from: config.SMTP_FROM,
+    await smtpService.sendMail({
       to: input.to,
       subject: 'AnchorPoint Admin Password Reset',
       text: [
