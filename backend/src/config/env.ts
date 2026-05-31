@@ -14,6 +14,15 @@ const envSchema = z.object({
     .pipe(z.number().positive()),
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required').default('file:./prisma/dev.db'),
   JWT_SECRET: z.string().min(8, 'JWT_SECRET must be at least 8 characters').default('stellar-anchor-secret'),
+  SEP24_INTERACTIVE_URL_JWT_SECRET: z
+    .string()
+    .min(8, 'SEP24_INTERACTIVE_URL_JWT_SECRET must be at least 8 characters')
+    .optional(),
+  SEP24_INTERACTIVE_URL_JWT_EXPIRATION_SECONDS: z
+    .string()
+    .default('600')
+    .transform((val: string) => parseInt(val, 10))
+    .pipe(z.number().int().min(60).max(86400)),
   INTERACTIVE_URL: z.string().url().default('http://localhost:3000'),
   WEBHOOK_URL: z.string().url().optional(),
   WEBHOOK_SECRET: z.string().min(1, 'WEBHOOK_SECRET cannot be empty').optional(),
@@ -61,6 +70,8 @@ const envSchema = z.object({
   VAULT_TOKEN: z.string().optional(),
   VAULT_TRANSIT_PATH: z.string().optional(),
   SIGNING_KEY: z.string().optional(),
+  ENABLE_KEY_ROTATION_WORKER: z.enum(['true', 'false']).default('false'),
+  KEY_ROTATION_WORKER_CRON: z.string().default('0 0 1 * *'),
   KYC_PROVIDER: z.enum(['mock', 'persona', 'shufti']).default('mock'),
   KYC_WEBHOOK_SECRET: z.string().optional(),
   PERSONA_API_KEY: z.string().optional(),
