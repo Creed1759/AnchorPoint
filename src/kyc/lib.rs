@@ -51,8 +51,9 @@ impl KycVerifier {
         env.storage()
             .persistent()
             .set(&DataKey::UserKyc(user.clone()), &expires_at);
+        // Topic: event name only; user + expires_at in data.
         env.events()
-            .publish((symbol_short!("kyc_set"), user), expires_at);
+            .publish(symbol_short!("kyc_set"), (user, expires_at));
     }
 
     pub fn is_kyc_valid(env: Env, user: Address) -> bool {
@@ -74,4 +75,23 @@ impl KycVerifier {
             .instance()
             .set(&DataKey::VerifierPubKey, &new_pubkey);
     }
+
+    pub fn revoke_kyc(env: Env, user: Address) {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+
+        let key = DataKey::UserKyc(user.clone());
+
+        if !env.storage().persistent().has(&key) {
+            panic!("no KYC record found for user");
+        }
+
+        env.storage().persistent().remove(&key);
+
+        env.events()
+            .publish((symbol_short!("kyc_rev"), user), ());
+    }
 }
+
+#[cfg(test)]
+mod tests;
