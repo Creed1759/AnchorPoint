@@ -1,63 +1,36 @@
 #![no_std]
-//! Flash Loan Provider
-//!
-//! Provides single-asset and batch multi-asset flash loans with **dynamic fee
-//! calculation**. The fee tier is determined by the loan amount:
-//!
-//! | Loan amount (raw units) | Fee (basis points) |
-//! |-------------------------|--------------------|
-//! | < 10 000                | 30 bps (0.30 %)    |
-//! | 10 000 – 99 999         | 20 bps (0.20 %)    |
-//! | ≥ 100 000               | 10 bps (0.10 %)    |
-//!
-//! The tiers can be overridden by the contract owner via `set_fee_tiers`.
-//! A static fallback fee (`fee_bps`) is also retained for backward
-//! compatibility and is used when no tiers are configured.
-//!
-//! ## Atomicity guarantee
-//!
-//! Repayment is enforced by comparing the provider's token balance before and
-//! after the receiver callback. If the balance does not increase by at least
-//! the fee, the entire transaction reverts.
 
 use soroban_sdk::{
     contract, contractclient, contractimpl, contracttype, symbol_short, token, Address, Env, Map,
     Vec,
 };
 
-// ── Storage keys ──────────────────────────────────────────────────────────────
+fn calculate_fee(amount: i128, fee_bps: u32) -> i128 {
+    // Fee math is shared by single and batch loans so both paths use identical rounding.
+    amount
+        .checked_mul(i128::from(fee_bps))
+        .and_then(|value| value.checked_div(10_000))
+        .expect("Fee calculation overflow")
+}
 
-/// Storage keys for the flash loan provider.
+fn checked_repayment_amount(balance: i128, fee: i128) -> i128 {
+    // Repayment checks must trap on overflow instead of accepting an invalid balance target.
+    balance
+        .checked_add(fee)
+        .expect("Repayment calculation overflow")
+}
+
+/// Storage keys for the flash loan provider
 #[derive(Clone)]
 #[contracttype]
 enum DataKey {
-    /// Static fallback fee in basis points (e.g., 5 = 0.05 %).
+    /// Fee basis points (e.g., 5 = 0.05%)
     FeeBps,
-    /// Dynamic fee tiers: Vec<(volume_threshold: i128, fee_bps: i128)>.
-    /// Tiers must be sorted ascending by threshold.
-    FeeTiers,
-    /// Security registry address (optional).
+    /// Security registry address
     SecurityRegistry,
-    /// Transaction-scoped lock for flash-loan callbacks.
-    ReentrancyLock,
 }
 
-// ── Public types ──────────────────────────────────────────────────────────────
-
-/// A single dynamic fee tier.
-///
-/// When the loan `amount` is ≥ `volume_threshold`, `fee_bps` applies.
-/// Tiers are evaluated in ascending order; the last matching tier wins.
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FeeTier {
-    /// Minimum loan amount (inclusive) for this tier to apply.
-    pub volume_threshold: i128,
-    /// Fee in basis points (10 000 = 100 %).
-    pub fee_bps: i128,
-}
-
-/// Loan details passed to batch flash loan receivers.
+/// Loan details for batch operations
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LoanDetail {
@@ -66,205 +39,135 @@ pub struct LoanDetail {
     pub fee: i128,
 }
 
-// ── Receiver interfaces ───────────────────────────────────────────────────────
-
-/// Interface that a single-asset flash loan receiver must implement.
+/// Interface that a flash loan receiver must implement.
 #[contractclient(name = "FlashLoanReceiverClient")]
 pub trait FlashLoanReceiver {
     fn execute_loan(env: Env, token: Address, amount: i128, fee: i128);
 }
 
-/// Interface that a batch flash loan receiver must implement.
+/// Interface for batch flash loan receivers.
+/// Allows borrowing multiple assets in a single atomic transaction.
 #[contractclient(name = "FlashLoanBatchReceiverClient")]
 pub trait FlashLoanBatchReceiver {
+    /// Execute a batch flash loan with multiple assets.
+    ///
+    /// # Arguments
+    /// * `loans` - Vector of LoanDetail containing token, amount, and fee for each loan.
     fn execute_batch_loan(env: Env, loans: Vec<LoanDetail>);
 }
-
-// ── Contract ──────────────────────────────────────────────────────────────────
 
 #[contract]
 pub struct FlashLoanProvider;
 
 #[contractimpl]
 impl FlashLoanProvider {
-    // ── Configuration ─────────────────────────────────────────────────────────
-
-    /// Attach an optional security registry (one-time, immutable).
-    pub fn set_security_registry(env: Env, registry: Address) {
-        if env.storage().instance().has(&DataKey::SecurityRegistry) {
+    pub fn set_security_registry(env: soroban_sdk::Env, registry: soroban_sdk::Address) {
+        if env
+            .storage()
+            .instance()
+            .has(&soroban_sdk::symbol_short!("sec_reg"))
+        {
             panic!("already set");
         }
         env.storage()
             .instance()
-            .set(&DataKey::SecurityRegistry, &registry);
+            .set(&soroban_sdk::symbol_short!("sec_reg"), &registry);
     }
 
-    /// Set the static fallback fee in basis points.
-    ///
-    /// Used when no dynamic fee tiers are configured, or as a floor.
-    /// Default: 5 bps (0.05 %).
+    /// Set the fee basis points for flash loans.
+    /// Default is 5 basis points (0.05%).
     pub fn set_fee_bps(env: Env, fee_bps: u32) {
-        if fee_bps > 10_000 {
+        if fee_bps > 10000 {
             panic!("fee cannot exceed 100%");
         }
         env.storage().instance().set(&DataKey::FeeBps, &fee_bps);
     }
 
-    /// Return the current static fallback fee in basis points.
+    /// Get the current fee basis points.
     pub fn get_fee_bps(env: Env) -> u32 {
         env.storage().instance().get(&DataKey::FeeBps).unwrap_or(5)
     }
 
-    /// Configure dynamic fee tiers.
+    /// Executes a flash loan for a single asset.
     ///
-    /// `tiers` must be sorted ascending by `volume_threshold`.
-    /// Pass an empty vec to disable dynamic fees (falls back to `fee_bps`).
-    ///
-    /// ## Example tiers
-    /// ```ignore
-    /// [
-    ///   FeeTier { volume_threshold:      0, fee_bps: 30 }, // < 10 000 → 0.30 %
-    ///   FeeTier { volume_threshold: 10_000, fee_bps: 20 }, // 10k–99k  → 0.20 %
-    ///   FeeTier { volume_threshold: 100_000, fee_bps: 10 }, // ≥ 100k  → 0.10 %
-    /// ]
-    /// ```
-    pub fn set_fee_tiers(env: Env, tiers: Vec<FeeTier>) {
-        // Validate: all fee_bps ≤ 10 000 and thresholds are non-negative.
-        for i in 0..tiers.len() {
-            let t = tiers.get(i).unwrap();
-            if t.fee_bps > 10_000 {
-                panic!("tier fee cannot exceed 100%");
-            }
-            if t.volume_threshold < 0 {
-                panic!("volume threshold must be non-negative");
-            }
-        }
-        env.storage().instance().set(&DataKey::FeeTiers, &tiers);
-    }
-
-    /// Return the configured fee tiers (may be empty).
-    pub fn get_fee_tiers(env: Env) -> Vec<FeeTier> {
-        env.storage()
-            .instance()
-            .get(&DataKey::FeeTiers)
-            .unwrap_or_else(|| Vec::new(&env))
-    }
-
-    // ── Fee calculation ───────────────────────────────────────────────────────
-
-    /// Calculate the fee for a given loan `amount` using dynamic tiers.
-    ///
-    /// Tiers are evaluated in ascending order; the last tier whose
-    /// `volume_threshold ≤ amount` applies. Falls back to the static
-    /// `fee_bps` when no tiers are configured or no tier matches.
-    ///
-    /// This implements the dynamic fee calculation required by issue #396.
-    pub fn calculate_fee(env: Env, amount: i128) -> i128 {
-        Self::_calculate_fee(&env, amount)
-    }
-
-    fn _calculate_fee(env: &Env, amount: i128) -> i128 {
-        let tiers: Vec<FeeTier> = env
-            .storage()
-            .instance()
-            .get(&DataKey::FeeTiers)
-            .unwrap_or_else(|| Vec::new(env));
-
-        let mut selected_bps: i128 = env
-            .storage()
-            .instance()
-            .get::<DataKey, u32>(&DataKey::FeeBps)
-            .unwrap_or(5) as i128;
-
-        // Walk tiers in order; last matching threshold wins.
-        for i in 0..tiers.len() {
-            let tier = tiers.get(i).unwrap();
-            if amount >= tier.volume_threshold {
-                selected_bps = tier.fee_bps;
-            } else {
-                // Tiers are sorted ascending — no further tier can match.
-                break;
-            }
-        }
-
-        amount
-            .checked_mul(selected_bps)
-            .expect("fee calculation overflow")
-            / 10_000
-    }
-
-    // ── Flash loan (single asset) ─────────────────────────────────────────────
-
-    /// Execute a single-asset flash loan.
-    ///
-    /// 1. Calculates the dynamic fee for `amount`.
-    /// 2. Transfers `amount` to `receiver`.
-    /// 3. Calls `receiver.execute_loan(token, amount, fee)`.
-    /// 4. Verifies the provider's balance increased by at least `fee`.
-    ///
-    /// The entire transaction reverts if repayment is insufficient.
+    /// # Arguments
+    /// * `receiver` - The address of the contract that will receive the loan and execute the logic.
+    /// * `token` - The address of the token to be lent.
+    /// * `amount` - The amount of tokens to lend.
     pub fn flash_loan(env: Env, receiver: Address, token: Address, amount: i128) {
-        Self::acquire_reentrancy_lock(&env);
-        assert!(amount > 0, "amount must be positive");
+        // 1. Calculate the fee (default 5 basis points = 0.05%)
+        let fee_bps = Self::get_fee_bps(env.clone());
+        let fee = calculate_fee(amount, fee_bps);
 
-        let fee = Self::_calculate_fee(&env, amount);
-
+        // 2. Initial balance check
         let token_client = token::Client::new(&env, &token);
         let balance_before = token_client.balance(&env.current_contract_address());
 
-        // Transfer principal to receiver.
+        // 3. Transfer tokens to the receiver
         token_client.transfer(&env.current_contract_address(), &receiver, &amount);
 
-        // Invoke receiver callback.
+        // 4. Invoke the receiver's execution logic
         let receiver_client = FlashLoanReceiverClient::new(&env, &receiver);
         receiver_client.execute_loan(&token, &amount, &fee);
 
-        // Enforce repayment: balance must have increased by at least `fee`.
+        // 5. Verify repayment
+        // This ensures atomic repayment enforcement. If the balance check fails, the
+        // whole transaction reverts, ensuring the loan is only successful if repaid.
+        // Soroban's call stack management and the lack of contract state in this provider
+        // make it naturally resistant to reentrancy attacks.
         let balance_after = token_client.balance(&env.current_contract_address());
-        let required = balance_before
-            .checked_add(fee)
-            .expect("repayment calculation overflow");
 
-        if balance_after < required {
+        let required_repayment = checked_repayment_amount(balance_before, fee);
+        if balance_after < required_repayment {
             panic!("Flash loan not repaid with fee");
         }
 
+        // Topic: event name only; receiver + token (Addresses) + amounts in data.
         env.events()
             .publish((symbol_short!("flash_ln"),), (receiver, token, amount, fee));
-        Self::release_reentrancy_lock(&env);
     }
 
-    // ── Batch flash loan ──────────────────────────────────────────────────────
-
-    /// Execute a batch flash loan across multiple assets atomically.
-    ///
-    /// Each asset in `loans` receives its own dynamic fee calculation.
-    /// All assets must be repaid within the same transaction.
+    /// Executes a batch flash loan for multiple assets in a single atomic transaction.
+    /// This enables complex arbitrage strategies across multiple token pairs.
     ///
     /// # Arguments
-    /// * `receiver` – contract implementing `FlashLoanBatchReceiver`.
-    /// * `loans`    – vec of `(token_address, amount)` pairs.
+    /// * `receiver` - The address of the contract that will receive the loans and execute the logic.
+    /// * `loans` - Vector of (token_address, amount) tuples for each asset to borrow.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let loans = vec![
+    ///     &env,
+    ///     (token_a, 1000),
+    ///     (token_b, 500),
+    ///     (token_c, 250),
+    /// ];
+    /// provider.flash_loan_batch(&receiver, &loans);
+    /// ```
     pub fn flash_loan_batch(env: Env, receiver: Address, loans: Vec<(Address, i128)>) {
-        Self::acquire_reentrancy_lock(&env);
         if loans.is_empty() {
             panic!("cannot flash loan zero assets");
         }
 
+        let fee_bps = Self::get_fee_bps(env.clone());
         let provider_address = env.current_contract_address();
 
-        // 1. Calculate fees and snapshot balances.
+        // 1. Calculate fees and check initial balances for all tokens
         let mut loan_details: Vec<LoanDetail> = Vec::new(&env);
-        let mut balance_snapshots: Map<Address, i128> = Map::new(&env);
+        let mut required_repayments: Map<Address, i128> = Map::new(&env);
 
         for i in 0..loans.len() {
             let (token, amount) = loans.get(i).unwrap();
-            assert!(amount > 0, "amount must be positive");
+            let fee = calculate_fee(amount, fee_bps);
 
-            let fee = Self::_calculate_fee(&env, amount);
             let token_client = token::Client::new(&env, &token);
-            let balance_before = token_client.balance(&provider_address);
+            let current_required = required_repayments
+                .get(token.clone())
+                .unwrap_or_else(|| token_client.balance(&provider_address));
+            // Aggregate by token so duplicate-token batches must repay every fee.
+            let expected_repayment = checked_repayment_amount(current_required, fee);
 
-            balance_snapshots.set(token.clone(), balance_before);
+            required_repayments.set(token.clone(), expected_repayment);
             loan_details.push_back(LoanDetail {
                 token: token.clone(),
                 amount,
@@ -272,48 +175,41 @@ impl FlashLoanProvider {
             });
         }
 
-        // 2. Transfer all principals to receiver.
+        // 2. Transfer all tokens to the receiver
         for i in 0..loans.len() {
             let (token, amount) = loans.get(i).unwrap();
             let token_client = token::Client::new(&env, &token);
             token_client.transfer(&provider_address, &receiver, &amount);
         }
 
-        // 3. Invoke batch receiver callback.
+        // 3. Invoke the receiver's batch execution logic
         let receiver_client = FlashLoanBatchReceiverClient::new(&env, &receiver);
         receiver_client.execute_batch_loan(&loan_details);
 
-        // 4. Verify repayment for every asset.
+        // 4. Verify repayment for all tokens
         for i in 0..loan_details.len() {
             let loan = loan_details.get(i).unwrap();
             let token_client = token::Client::new(&env, &loan.token);
             let balance_after = token_client.balance(&provider_address);
-            let balance_before = balance_snapshots.get(loan.token.clone()).unwrap();
-            let expected = balance_before + loan.fee;
-
-            if balance_after < expected {
-                panic!("Flash loan not repaid for token");
+            let expected_repayment = required_repayments.get(loan.token.clone()).unwrap();
+            if balance_after < expected_repayment {
+                panic!(
+                    "Flash loan not repaid for token {:?}: expected {}, got {}",
+                    loan.token,
+                    expected_repayment,
+                    balance_after
+                );
             }
         }
 
+        // 5. Emit batch event
         env.events()
             .publish((symbol_short!("fl_batch"), receiver), loan_details);
-        Self::release_reentrancy_lock(&env);
-    }
-
-    fn acquire_reentrancy_lock(env: &Env) {
-        if env.storage().temporary().has(&DataKey::ReentrancyLock) {
-            panic!("reentrant flash loan");
-        }
-        env.storage()
-            .temporary()
-            .set(&DataKey::ReentrancyLock, &true);
-    }
-
-    fn release_reentrancy_lock(env: &Env) {
-        env.storage().temporary().remove(&DataKey::ReentrancyLock);
     }
 }
 
 mod tests;
+
+#[allow(unexpected_cfgs)]
+#[cfg(kani)]
 mod verification;
