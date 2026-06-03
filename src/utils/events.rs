@@ -3,7 +3,7 @@
 //! Provides a unified shape for all events emitted by AnchorPoint contracts,
 //! making it easier for off-chain indexers to process Soroban data.
 
-use soroban_sdk::{contracttype, symbol_short, Address, Env, Bytes};
+use soroban_sdk::{contracttype, symbol_short, Address, Bytes, Env};
 
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
@@ -124,6 +124,7 @@ mod tests {
     use soroban_sdk::Val;
     use soroban_sdk::{
         contract, contractimpl, testutils::Address as _, testutils::Events, vec, FromVal, IntoVal,
+        Val,
     };
 
     #[contract]

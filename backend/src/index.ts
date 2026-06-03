@@ -6,9 +6,12 @@ import { swaggerSpec } from './config/swagger';
 import logger from './utils/logger';
 import transactionsRouter from './api/routes/transactions.route';
 import adminRouter from './api/routes/admin.route';
+import authRouter from './api/routes/auth.route';
 import sep24Router from './api/routes/sep24.route';
+import sep12Router from './api/routes/sep12.route';
 import sep6Router from './api/routes/sep6.route';
 import sep38Router from './api/routes/sep38.route';
+import sep31Router from './api/routes/sep31.route';
 import sep40Router from './api/routes/sep40.route';
 import infoRouter from './api/routes/info.route';
 import metricsRouter from './api/routes/metrics.route';
@@ -23,12 +26,14 @@ import { feeReportScheduler } from './workers/fee-report.scheduler';
 import eventRouter from './api/routes/event.route';
 import notificationsRouter from './api/routes/notifications.route';
 import { publicLimiter } from './api/middleware/rate-limit.middleware';
-import { notificationService, NotificationType } from './services/notification.service';
-import { ConsoleEmailProvider, ConsoleSmsProvider, ConsolePushProvider } from './lib/notifications/providers';
+import { notificationService } from './services/notification.service';
+import { createEmailProvider, ConsoleSmsProvider, ConsolePushProvider } from './lib/notifications/providers';
+import { NotificationType } from '@prisma/client';
+import { validateKmsConfigOnStartup } from './lib/key-management.service';
 import { getBreakerHealthSummary, registerBreakerMetrics } from './resilience';
 
 // Initialize Notification Engine
-notificationService.registerProvider(NotificationType.EMAIL, new ConsoleEmailProvider());
+notificationService.registerProvider(NotificationType.EMAIL, createEmailProvider());
 notificationService.registerProvider(NotificationType.SMS, new ConsoleSmsProvider());
 notificationService.registerProvider(NotificationType.PUSH, new ConsolePushProvider());
 
@@ -43,6 +48,7 @@ const corsOptions = {
 };
 app.use(cors(corsOptions));
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 /**
  * @swagger
@@ -136,22 +142,14 @@ app.use('/api/notifications', notificationsRouter);
 // Relayer API for gasless token approvals
 app.use('/api/relayer', relayerRouter);
 
-// Prometheus metrics endpoint
-app.use('/metrics', metricsRouter);
-
-// SEP-38 Price Quotes API
-app.use('/sep38', sep38Router);
-
 // SEP-40 Swap Rates API
 app.use('/sep40', sep40Router);
 
-// SEP-1 Info endpoint
-app.use('/info', infoRouter);
-
-// SEP-24 routes
-app.use('/sep24', sep24Router);
-// Public endpoints with shared Redis-backed rate limit state
+// Public endpoints — shared Redis-backed rate limit state
+app.use('/auth', publicLimiter, authRouter);
 app.use('/sep38', publicLimiter, sep38Router);
+app.use('/sep31', publicLimiter, sep31Router);
+app.use('/sep12', publicLimiter, sep12Router);
 app.use('/info', publicLimiter, infoRouter);
 app.use('/sep24', publicLimiter, sep24Router);
 app.use('/sep6', publicLimiter, sep6Router);
@@ -164,6 +162,8 @@ app.use(errorHandler);
 
 /* istanbul ignore next */
 if (process.env.NODE_ENV !== 'test') {
+  validateKmsConfigOnStartup(config);
+
   configService.initialize()
     .catch((error) => {
       logger.error('Failed to initialize config service:', error);
@@ -172,18 +172,11 @@ if (process.env.NODE_ENV !== 'test') {
       app.listen(PORT, () => {
         logger.info(`Backend service listening at http://localhost:${PORT}`);
         logger.info(`API Documentation available at http://localhost:${PORT}/api-docs`);
-        
         // Initialize Circuit Breaker Telemetry
         registerBreakerMetrics();
+        feeReportScheduler.start();
       });
     });
-  app.listen(PORT, () => {
-    logger.info(`Backend service listening at http://localhost:${PORT}`);
-    logger.info(`API Documentation available at http://localhost:${PORT}/api-docs`);
-    
-    // Start fee report scheduler
-    feeReportScheduler.start();
-  });
 }
 
 export default app;
