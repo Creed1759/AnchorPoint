@@ -22,6 +22,8 @@ test.describe('dashboard cross-browser smoke coverage', () => {
     await page.getByRole('button', { name: 'USDC' }).click();
 
     await page.getByRole('button', { name: 'Launch KYC Portal' }).click();
+    await page.getByLabel('Full Name').fill('Jane Doe');
+    await page.getByRole('button', { name: 'Submit KYC and continue' }).click();
     await expect(page.getByTestId('active-view')).toContainText('Transaction Initiated');
 
     await page.getByRole('button', { name: 'KYC Status' }).click();
