@@ -17,6 +17,21 @@ jobs:
     name: Check Migration Integrity
     runs-on: ubuntu-latest
     
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: prisma
+          POSTGRES_PASSWORD: prisma_password
+          POSTGRES_DB: testdb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -40,7 +55,7 @@ jobs:
       - name: Setup test database
         working-directory: backend
         run: |
-          echo "DATABASE_URL=file:./test.db" > .env
+          echo "DATABASE_URL=postgresql://prisma:prisma_password@localhost:5432/testdb" > .env
           npx prisma migrate deploy
       
       - name: Run migration integrity checks
@@ -115,6 +130,21 @@ jobs:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/staging' || github.base_ref == 'staging'
     
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: prisma
+          POSTGRES_PASSWORD: prisma_password
+          POSTGRES_DB: staging_testdb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -137,7 +167,7 @@ jobs:
         working-directory: backend
         run: |
           # Create a test database with production-like schema
-          echo "DATABASE_URL=file:./staging-test.db" > .env
+          echo "DATABASE_URL=postgresql://prisma:prisma_password@localhost:5432/staging_testdb" > .env
           npx prisma migrate deploy
           
           # Seed with test data if needed

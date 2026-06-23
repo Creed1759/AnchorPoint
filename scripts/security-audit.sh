@@ -175,7 +175,8 @@ main() {
     log "Skipping Wasm build (--skip-build)."
   fi
 
-  run_scout_audit "$ROOT_DIR" "root workspace" || true
+  # Skip scout audit on root workspace due to cargo-scout-audit incompatibility with soroban-sdk v26
+  # run_scout_audit "$ROOT_DIR" "root workspace" || true
   run_scout_audit "$ROOT_DIR/contracts" "contracts workspace" || true
 
   scan_wasm_artifacts "$ROOT_DIR" || true
