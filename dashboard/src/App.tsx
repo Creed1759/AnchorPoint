@@ -59,6 +59,58 @@ const defaultUiConfig: UiConfig = {
 };
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? 'http://localhost:3002';
+const darkSurface = '#020617';
+const lightText = '#ffffff';
+const fallbackPrimaryText = '#93c5fd';
+const fallbackAccentText = '#5eead4';
+
+const hexToRgb = (hexColor: string): [number, number, number] | null => {
+  const normalized = hexColor.replace('#', '').trim();
+  const hex = normalized.length === 3
+    ? normalized.split('').map((char) => `${char}${char}`).join('')
+    : normalized;
+
+  if (!/^[0-9a-f]{6}$/i.test(hex)) {
+    return null;
+  }
+
+  return [
+    Number.parseInt(hex.slice(0, 2), 16),
+    Number.parseInt(hex.slice(2, 4), 16),
+    Number.parseInt(hex.slice(4, 6), 16),
+  ];
+};
+
+const relativeLuminance = (hexColor: string): number => {
+  const rgb = hexToRgb(hexColor);
+  if (!rgb) {
+    return 0;
+  }
+
+  const [red, green, blue] = rgb.map((channel) => {
+    const scaled = channel / 255;
+    return scaled <= 0.03928 ? scaled / 12.92 : ((scaled + 0.055) / 1.055) ** 2.4;
+  });
+
+  return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+};
+
+const contrastRatio = (foreground: string, background: string): number => {
+  const foregroundLuminance = relativeLuminance(foreground);
+  const backgroundLuminance = relativeLuminance(background);
+  const lighter = Math.max(foregroundLuminance, backgroundLuminance);
+  const darker = Math.min(foregroundLuminance, backgroundLuminance);
+
+  return (lighter + 0.05) / (darker + 0.05);
+};
+
+const getAccessibleTextColor = (brandColor: string, fallbackColor: string) => (
+  contrastRatio(brandColor, darkSurface) >= 4.5 ? brandColor : fallbackColor
+);
+
+const getAccessibleForeground = (backgroundColor: string) => (
+  contrastRatio(lightText, backgroundColor) >= 4.5 ? lightText : darkSurface
+);
 
 const LogoMark = ({ uiConfig }: { uiConfig: UiConfig }) => {
   if (uiConfig.logoUrl) {
@@ -67,7 +119,7 @@ const LogoMark = ({ uiConfig }: { uiConfig: UiConfig }) => {
 
   return (
     <div className="p-2 bg-primary rounded-lg">
-      <Building2 size={24} className="text-white" />
+      <Building2 size={24} className="text-primary-foreground" />
     </div>
   );
 };
@@ -76,18 +128,18 @@ const RequirementList = ({ title, fields }: { title: string; fields: FieldRequir
   <div className="glass-card p-5">
     <div className="flex items-center justify-between gap-4">
       <h3 className="text-base font-semibold">{title}</h3>
-      <span className="text-xs uppercase tracking-[0.2em] text-slate-500">{fields.length} fields</span>
+      <span className="text-xs uppercase tracking-[0.2em] text-slate-400">{fields.length} fields</span>
     </div>
     <div className="mt-4 space-y-3">
       {fields.map((field) => (
-        <div key={field.key} className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+        <div key={field.key} className="rounded-lg border border-slate-600 bg-slate-950/40 p-3">
           <div className="flex items-center justify-between gap-3">
             <p className="font-medium text-slate-100">{field.label}</p>
-            <span className={`text-xs font-semibold ${field.required ? 'text-amber-300' : 'text-slate-500'}`}>
+            <span className={`text-xs font-semibold ${field.required ? 'text-amber-300' : 'text-slate-400'}`}>
               {field.required ? 'Required' : 'Optional'}
             </span>
           </div>
-          {field.placeholder ? <p className="mt-1 text-sm text-slate-500">{field.placeholder}</p> : null}
+          {field.placeholder ? <p className="mt-1 text-sm text-slate-400">{field.placeholder}</p> : null}
           {field.helpText ? <p className="mt-1 text-sm text-slate-400">{field.helpText}</p> : null}
         </div>
       ))}
@@ -117,7 +169,7 @@ const DashboardOverview = ({ uiConfig }: { uiConfig: UiConfig }) => (
 
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1.5fr_1fr]">
       <div className="glass-card flex h-64 items-center justify-center p-6">
-        <p className="italic text-slate-500">Volume Chart Placeholder</p>
+        <p className="italic text-slate-400">Volume Chart Placeholder</p>
       </div>
       <div className="glass-card p-6">
         <h3 className="font-display text-xl font-bold">Anchor Branding</h3>
@@ -125,19 +177,19 @@ const DashboardOverview = ({ uiConfig }: { uiConfig: UiConfig }) => (
           <LogoMark uiConfig={uiConfig} />
           <div>
             <p className="font-medium">{uiConfig.brandName}</p>
-            <p className="text-sm text-slate-500">{uiConfig.supportEmail ?? 'Support contact not configured'}</p>
+            <p className="text-sm text-slate-400">{uiConfig.supportEmail ?? 'Support contact not configured'}</p>
           </div>
         </div>
         <div className="mt-6 grid grid-cols-2 gap-3">
-          <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Primary</p>
+          <div className="rounded-lg border border-slate-600 bg-slate-950/50 p-3">
+            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Primary</p>
             <div className="mt-3 flex items-center gap-3">
               <span className="h-6 w-6 rounded-full border border-white/10" style={{ backgroundColor: uiConfig.primaryColor }} />
               <span className="font-mono text-sm">{uiConfig.primaryColor}</span>
             </div>
           </div>
-          <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Accent</p>
+          <div className="rounded-lg border border-slate-600 bg-slate-950/50 p-3">
+            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Accent</p>
             <div className="mt-3 flex items-center gap-3">
               <span className="h-6 w-6 rounded-full border border-white/10" style={{ backgroundColor: uiConfig.accentColor }} />
               <span className="font-mono text-sm">{uiConfig.accentColor}</span>
@@ -153,7 +205,7 @@ const TransactionHistory = () => (
   <div className="glass-card overflow-x-auto">
     <table className="w-full text-left">
       <thead>
-        <tr className="border-b border-slate-800 text-sm text-slate-400">
+        <tr className="border-b border-slate-600 text-sm text-slate-400">
           <th className="p-4 font-medium">Type</th>
           <th className="p-4 font-medium">Asset</th>
           <th className="p-4 font-medium">Amount</th>
@@ -161,7 +213,7 @@ const TransactionHistory = () => (
           <th className="p-4 font-medium">Date</th>
         </tr>
       </thead>
-      <tbody className="divide-y divide-slate-800">
+      <tbody className="divide-y divide-slate-600">
         {[
           { type: 'Deposit', asset: 'USDC', amount: '500.00', status: 'Completed', date: '2024-03-15' },
           { type: 'Withdrawal', asset: 'USDC', amount: '120.50', status: 'Pending', date: '2024-03-16' },
@@ -200,7 +252,7 @@ const SEP24Flow = ({ type, uiConfig }: { type: 'deposit' | 'withdraw'; uiConfig:
         {[1, 2, 3].map((s) => (
           <div key={s} className="flex items-center">
             <div className={`flex h-10 w-10 items-center justify-center rounded-full font-bold transition-all ${
-              step >= s ? 'bg-primary text-primary-foreground shadow-lg shadow-primary/20' : 'bg-slate-800 text-slate-500'
+              step >= s ? 'bg-primary text-primary-foreground shadow-lg shadow-primary/20' : 'bg-slate-800 text-slate-400'
             }`}>
               {s}
             </div>
@@ -225,15 +277,15 @@ const SEP24Flow = ({ type, uiConfig }: { type: 'deposit' | 'withdraw'; uiConfig:
                   <button
                     key={asset}
                     onClick={() => setStep(2)}
-                    className="flex items-center justify-between rounded-xl border border-slate-700 bg-slate-900 p-4 transition-all hover:border-primary/50"
+                    className="flex items-center justify-between rounded-xl border border-slate-500 bg-slate-900 p-4 transition-all hover:border-primary"
                   >
                     <div className="flex items-center gap-3">
-                      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/20 font-bold text-primary">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/20 font-bold text-primary-text">
                         {asset[0]}
                       </div>
                       <span>{asset}</span>
                     </div>
-                    <ArrowUpRight size={18} className="text-slate-500" />
+                    <ArrowUpRight size={18} className="text-slate-400" />
                   </button>
                 ))}
               </div>
@@ -253,11 +305,11 @@ const SEP24Flow = ({ type, uiConfig }: { type: 'deposit' | 'withdraw'; uiConfig:
             <div className="space-y-4">
               <h2 className="font-display text-2xl font-bold">Identity Verification</h2>
               <p className="text-slate-400">KYC requirements are also backend-driven, so each anchor can tighten or relax the form without redeploying the dashboard.</p>
-              <div className="aspect-video rounded-xl border border-dashed border-slate-700 bg-slate-900 p-6 text-center">
+              <div className="aspect-video rounded-xl border border-dashed border-slate-500 bg-slate-900 p-6 text-center">
                 <div className="flex h-full flex-col items-center justify-center">
-                  <ShieldCheck size={48} className="mb-4 text-primary" />
+                  <ShieldCheck size={48} className="mb-4 text-primary-text" />
                   <p className="font-medium text-slate-300">{uiConfig.brandName} Secure KYC</p>
-                  <p className="mt-2 text-sm text-slate-500">Placeholder for SEP-12 interactive webview</p>
+                  <p className="mt-2 text-sm text-slate-400">Placeholder for SEP-12 interactive webview</p>
                   <button onClick={() => setStep(3)} className="btn-primary mt-6">
                     Launch KYC Portal
                   </button>
@@ -280,7 +332,7 @@ const SEP24Flow = ({ type, uiConfig }: { type: 'deposit' | 'withdraw'; uiConfig:
             </div>
             <h2 className="mb-2 font-display text-3xl font-bold">Transaction Initiated</h2>
             <p className="mb-8 text-slate-400">Your {type} request has been submitted with {uiConfig.brandName} branding and field rules pulled from the backend.</p>
-            <button onClick={() => setStep(1)} className="font-medium text-primary hover:underline">
+            <button onClick={() => setStep(1)} className="font-medium text-primary-text hover:underline">
               Back to Dashboard
             </button>
           </motion.div>
@@ -341,17 +393,20 @@ const App = () => {
       style={
         {
           ['--primary' as string]: uiConfig.primaryColor,
+          ['--primary-foreground' as string]: getAccessibleForeground(uiConfig.primaryColor),
+          ['--primary-text' as string]: getAccessibleTextColor(uiConfig.primaryColor, fallbackPrimaryText),
           ['--accent' as string]: uiConfig.accentColor,
+          ['--accent-text' as string]: getAccessibleTextColor(uiConfig.accentColor, fallbackAccentText),
         } as React.CSSProperties
       }
     >
-      <aside className={`fixed inset-y-0 left-0 z-50 w-64 transform border-r border-slate-800 bg-card transition-transform duration-300 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} lg:relative lg:translate-x-0`}>
+      <aside className={`fixed inset-y-0 left-0 z-50 w-64 transform border-r border-slate-600 bg-card transition-transform duration-300 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} lg:relative lg:translate-x-0`}>
         <div className="p-6">
           <div className="mb-10 flex items-center gap-3">
             <LogoMark uiConfig={uiConfig} />
             <div className="min-w-0">
               <h1 className="truncate font-display text-xl font-bold tracking-tight">{uiConfig.brandName}</h1>
-              <p className="truncate text-xs uppercase tracking-[0.2em] text-slate-500">Anchor dashboard</p>
+              <p className="truncate text-xs uppercase tracking-[0.2em] text-slate-400">Anchor dashboard</p>
             </div>
           </div>
 
@@ -362,7 +417,7 @@ const App = () => {
                 onClick={() => setActiveTab(item.id)}
                 className={`flex w-full items-center gap-3 rounded-lg px-4 py-3 transition-all ${
                   activeTab === item.id
-                    ? 'border border-primary/20 bg-primary/10 text-primary'
+                    ? 'border border-primary/40 bg-primary/10 text-primary-text'
                     : 'text-slate-400 hover:bg-slate-900 hover:text-slate-200'
                 }`}
               >
@@ -373,31 +428,31 @@ const App = () => {
           </nav>
         </div>
 
-        <div className="absolute bottom-0 w-full border-t border-slate-800 p-6">
+        <div className="absolute bottom-0 w-full border-t border-slate-600 p-6">
           <div className="flex items-center gap-3">
             <div className="h-8 w-8 rounded-full bg-slate-800" />
             <div className="flex-1 overflow-hidden">
               <p className="truncate text-sm font-medium">Institutional Admin</p>
-              <p className="truncate text-xs text-slate-500">{loadingState === 'ready' ? 'Backend config synced' : loadingState === 'error' ? 'Using fallback config' : 'Loading config'}</p>
+              <p className="truncate text-xs text-slate-400">{loadingState === 'ready' ? 'Backend config synced' : loadingState === 'error' ? 'Using fallback config' : 'Loading config'}</p>
             </div>
           </div>
         </div>
       </aside>
 
       <main className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-40 flex h-16 items-center justify-between border-b border-slate-800 bg-background/50 px-8 backdrop-blur-md">
+        <header className="sticky top-0 z-40 flex h-16 items-center justify-between border-b border-slate-600 bg-background/50 px-8 backdrop-blur-md">
           <button className="lg:hidden" onClick={() => setSidebarOpen(!sidebarOpen)}>
             {sidebarOpen ? <X /> : <Menu />}
           </button>
 
           <div className="flex items-center gap-4">
-            <div className="hidden items-center gap-2 rounded-full border border-slate-700 bg-slate-900 px-3 py-1.5 md:flex">
+            <div className="hidden items-center gap-2 rounded-full border border-slate-500 bg-slate-900 px-3 py-1.5 md:flex">
               <div className={`h-2 w-2 rounded-full ${loadingState === 'error' ? 'bg-amber-500' : 'bg-emerald-500 animate-pulse'}`} />
               <span className="text-xs font-semibold text-slate-300">
                 {loadingState === 'error' ? 'Fallback Theme Active' : 'Config Connected'}
               </span>
             </div>
-            <button className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-4 py-2 transition-all hover:bg-slate-800">
+            <button className="flex items-center gap-2 rounded-lg border border-slate-500 bg-slate-900 px-4 py-2 transition-all hover:bg-slate-800">
               <Wallet size={18} />
               <span className="text-sm font-medium">Connect Wallet</span>
             </button>
@@ -440,7 +495,7 @@ const App = () => {
               {activeTab === 'history' && <TransactionHistory />}
               {activeTab === 'kyc' && (
                 <div className="glass-card p-12 text-center">
-                  <ShieldCheck size={64} className="mx-auto mb-4 text-primary" />
+                  <ShieldCheck size={64} className="mx-auto mb-4 text-primary-text" />
                   <h3 className="text-xl font-bold">Identity Verification</h3>
                   <p className="mt-2 text-slate-400">Current KYC requirements are being sourced from the active backend configuration.</p>
                   <div className="mx-auto mt-8 max-w-3xl">
