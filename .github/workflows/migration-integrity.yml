@@ -5,6 +5,7 @@ on:
     paths:
       - 'backend/prisma/**'
       - 'backend/scripts/migration-integrity-checker.ts'
+      - '.github/workflows/migration-integrity.yml'
   push:
     branches:
       - main
