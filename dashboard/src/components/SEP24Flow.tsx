@@ -4,6 +4,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { RequirementList } from './RequirementList';
 import { WithdrawalForm } from './WithdrawalForm';
 import { InteractiveWebview } from './InteractiveWebview';
+import { AssetDropdown } from './AssetDropdown';
+import type { AssetOption } from './AssetDropdown';
 import type { UiConfig } from '../types';
 
 const STEP_LABELS = [
@@ -17,8 +19,27 @@ const STEP_LABELS = [
 const DEPOSIT_STEPS = [1, 3, 4] as const;
 const WITHDRAW_STEPS = [1, 2, 3, 4] as const;
 
+const ASSET_OPTIONS: AssetOption[] = [
+  {
+    code: 'USDC',
+    name: 'USD Coin',
+    subtitle: 'Dollar-backed liquidity for institutional settlement',
+  },
+  {
+    code: 'EURT',
+    name: 'Euro Token',
+    subtitle: 'Euro-denominated transfer rail for SEP-24 flows',
+  },
+  {
+    code: 'ARST',
+    name: 'ARS Token',
+    subtitle: 'Argentine peso corridor asset for local payouts',
+  },
+];
+
 export const SEP24Flow = ({ type, uiConfig }: { type: 'deposit' | 'withdraw'; uiConfig: UiConfig }) => {
   const [step, setStep] = useState(1);
+  const [selectedAsset, setSelectedAsset] = useState(ASSET_OPTIONS[0].code);
   const transactionFields = uiConfig.fieldRequirements[type];
   const flowLabel = type === 'deposit' ? 'Deposit' : 'Withdrawal';
 
@@ -138,6 +159,20 @@ export const SEP24Flow = ({ type, uiConfig }: { type: 'deposit' | 'withdraw'; ui
                   </li>
                 ))}
               </ul>
+              <AssetDropdown
+                label={`${flowLabel} asset`}
+                options={ASSET_OPTIONS}
+                value={selectedAsset}
+                onChange={setSelectedAsset}
+              />
+              <button
+                type="button"
+                onClick={() => goToStep(isWithdraw ? 2 : 3)}
+                className="btn-primary inline-flex w-full items-center justify-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 sm:w-auto"
+              >
+                Continue with {selectedAsset}
+                <ArrowUpRight size={16} aria-hidden="true" />
+              </button>
             </div>
 
             <RequirementList
